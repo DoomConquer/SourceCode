@@ -1,0 +1,141 @@
+/**
+ *    Copyright ${license.git.copyrightYears} the original author or authors.
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+package org.apache.ibatis.builder;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.ibatis.mapping.ParameterMapping;
+import org.apache.ibatis.mapping.SqlSource;
+import org.apache.ibatis.parsing.GenericTokenParser;
+import org.apache.ibatis.parsing.TokenHandler;
+import org.apache.ibatis.reflection.MetaClass;
+import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.type.JdbcType;
+
+/**
+ * @author Clinton Begin
+ */
+public class SqlSourceBuilder extends BaseBuilder {
+
+  // XML配置中参数的属性
+  private static final String parameterProperties = "javaType,jdbcType,mode,numericScale,resultMap,typeHandler,jdbcTypeName";
+
+  public SqlSourceBuilder(Configuration configuration) {
+    super(configuration);
+  }
+
+  public SqlSource parse(String originalSql, Class<?> parameterType, Map<String, Object> additionalParameters) {
+    ParameterMappingTokenHandler handler = new ParameterMappingTokenHandler(configuration, parameterType, additionalParameters);
+    GenericTokenParser parser = new GenericTokenParser("#{", "}", handler); // 替换#{}为?
+    String sql = parser.parse(originalSql);
+    return new StaticSqlSource(configuration, sql, handler.getParameterMappings());
+  }
+
+  private static class ParameterMappingTokenHandler extends BaseBuilder implements TokenHandler {
+
+    private List<ParameterMapping> parameterMappings = new ArrayList<ParameterMapping>();
+    private Class<?> parameterType;    // 参数类类型Class
+    private MetaObject metaParameters; // 反射额外参数additionalParameters的类，可以获取额外参数类的getter、setter方法
+
+    public ParameterMappingTokenHandler(Configuration configuration, Class<?> parameterType, Map<String, Object> additionalParameters) {
+      super(configuration);
+      this.parameterType = parameterType;
+      this.metaParameters = configuration.newMetaObject(additionalParameters);
+    }
+
+    public List<ParameterMapping> getParameterMappings() {
+      return parameterMappings;
+    }
+
+    // 遇到#{xxx}建立一个参数映射ParameterMapping，同时替换为?（预处理语句）
+    @Override
+    public String handleToken(String content) {
+      parameterMappings.add(buildParameterMapping(content));
+      return "?";
+    }
+
+    // 建立参数映射ParameterMapping
+    private ParameterMapping buildParameterMapping(String content) {
+      Map<String, String> propertiesMap = parseParameterMapping(content); // 解析好的参数属性，里面可能包含expression、property和属性名
+      String property = propertiesMap.get("property");
+      Class<?> propertyType; // 解析property的类类型
+      if (metaParameters.hasGetter(property)) { // issue #448 get type from additional params 首先在额外参数中查找
+        propertyType = metaParameters.getGetterType(property);
+      } else if (typeHandlerRegistry.hasTypeHandler(parameterType)) {
+        propertyType = parameterType;
+      } else if (JdbcType.CURSOR.name().equals(propertiesMap.get("jdbcType"))) {
+        propertyType = java.sql.ResultSet.class;
+      } else if (property == null || Map.class.isAssignableFrom(parameterType)) {
+        propertyType = Object.class;
+      } else {
+        MetaClass metaClass = MetaClass.forClass(parameterType, configuration.getReflectorFactory());
+        if (metaClass.hasGetter(property)) {
+          propertyType = metaClass.getGetterType(property);
+        } else {
+          propertyType = Object.class;
+        }
+      }
+      ParameterMapping.Builder builder = new ParameterMapping.Builder(configuration, property, propertyType);
+      Class<?> javaType = propertyType;
+      String typeHandlerAlias = null;
+      for (Map.Entry<String, String> entry : propertiesMap.entrySet()) {
+        String name = entry.getKey();
+        String value = entry.getValue();
+        if ("javaType".equals(name)) {
+          javaType = resolveClass(value);
+          builder.javaType(javaType);
+        } else if ("jdbcType".equals(name)) {
+          builder.jdbcType(resolveJdbcType(value));
+        } else if ("mode".equals(name)) {
+          builder.mode(resolveParameterMode(value));
+        } else if ("numericScale".equals(name)) {
+          builder.numericScale(Integer.valueOf(value));
+        } else if ("resultMap".equals(name)) {
+          builder.resultMapId(value);
+        } else if ("typeHandler".equals(name)) {
+          typeHandlerAlias = value;
+        } else if ("jdbcTypeName".equals(name)) {
+          builder.jdbcTypeName(value);
+        } else if ("property".equals(name)) {
+          // Do Nothing
+        } else if ("expression".equals(name)) { // XML中参数不支持expression
+          throw new BuilderException("Expression based parameters are not supported yet");
+        } else {
+          throw new BuilderException("An invalid property '" + name + "' was found in mapping #{" + content + "}.  Valid properties are " + parameterProperties);
+        }
+      }
+      if (typeHandlerAlias != null) {
+        builder.typeHandler(resolveTypeHandler(javaType, typeHandlerAlias));
+      }
+      return builder.build();
+    }
+
+    // 返回ParameterExpression，
+    private Map<String, String> parseParameterMapping(String content) {
+      try {
+        return new ParameterExpression(content);
+      } catch (BuilderException ex) {
+        throw ex;
+      } catch (Exception ex) {
+        throw new BuilderException("Parsing error was found in mapping #{" + content + "}.  Check syntax #{property|(expression), var1=value1, var2=value2, ...} ", ex);
+      }
+    }
+  }
+
+}
