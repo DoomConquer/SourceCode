@@ -1,2 +1,2 @@
 # SourceCode
-源码注释，目前有Okio、mybatis、zookeeper等优秀开源框架的源码阅读注释，欢迎交流！
+源码注释，目前有Okio、mybatis、zookeeper等优秀开源框架的源码阅读注释，代码都是本人自己的理解，由于水平有限，难免会有误解的地方，欢迎批评指正，欢迎一起交流讨论！
