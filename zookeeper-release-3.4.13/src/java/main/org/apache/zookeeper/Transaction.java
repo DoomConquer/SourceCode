@@ -1,0 +1,77 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.zookeeper;
+
+import org.apache.yetus.audience.InterfaceAudience;
+import org.apache.zookeeper.AsyncCallback.MultiCallback;
+import org.apache.zookeeper.data.ACL;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Provides a builder style interface for doing multiple updates.  This is
+ * really just a thin layer on top of Zookeeper.multi().
+ * 提供一种builder风格的接口实现多操作
+ *
+ * @since 3.4.0
+ *
+ */
+@InterfaceAudience.Public
+public class Transaction {
+    private ZooKeeper zk;
+    private List<Op> ops = new ArrayList<Op>(); // 记录操作，提交zk.multi处理
+
+    protected Transaction(ZooKeeper zk) {
+        this.zk = zk;
+    }
+
+    // 创建
+    public Transaction create(final String path, byte data[], List<ACL> acl,
+                              CreateMode createMode) {
+        ops.add(Op.create(path, data, acl, createMode.toFlag()));
+        return this;
+    }
+
+    // 删除
+    public Transaction delete(final String path, int version) {
+        ops.add(Op.delete(path, version));
+        return this;
+    }
+
+    // 检查版本
+    public Transaction check(String path, int version) {
+        ops.add(Op.check(path, version));
+        return this;
+    }
+
+    // 设置
+    public Transaction setData(final String path, byte data[], int version) {
+        ops.add(Op.setData(path, data, version));
+        return this;
+    }
+
+    // 提交
+    public List<OpResult> commit() throws InterruptedException, KeeperException {
+        return zk.multi(ops);
+    }
+
+    // 异步提交
+    public void commit(MultiCallback cb, Object ctx) {
+        zk.multi(ops, cb, ctx);
+    }
+}
